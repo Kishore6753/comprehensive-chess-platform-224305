@@ -31,6 +31,8 @@ function createNewGame() {
     legalMoves: [],
     historySAN: [],
     pendingPromotion: null, // { from, to, color }
+
+    // Timer configuration (base time). Running/paused is managed in component state.
     timersEnabled: false,
     timerSeconds: 300
   };
@@ -80,6 +82,12 @@ function isPromotionMove(chess, from, to) {
   return (piece.color === "w" && targetRank === "8") || (piece.color === "b" && targetRank === "1");
 }
 
+function clampTimerSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 300;
+  return Math.min(60 * 60, Math.max(10, Math.round(n)));
+}
+
 function reducer(state, action) {
   switch (action.type) {
     case "RESET": {
@@ -120,9 +128,13 @@ function reducer(state, action) {
         moveToApply.promotion = promotion || "q";
       }
 
-      const result = chess.move(moveToApply);
-
-      if (!result) {
+      // chess.js may throw on invalid input; protect reducer from runtime crashes.
+      try {
+        const result = chess.move(moveToApply);
+        if (!result) {
+          return { ...state, selectedSquare: null, legalMoves: [] };
+        }
+      } catch (e) {
         return { ...state, selectedSquare: null, legalMoves: [] };
       }
 
@@ -165,6 +177,9 @@ export function ChessGame() {
   const [aiDifficulty, setAiDifficulty] = useState("medium"); // easy|medium|hard
   const [aiThinking, setAiThinking] = useState(false);
 
+  // Timer run state (separate from reducer; config lives in reducer).
+  const [timersRunning, setTimersRunning] = useState(false);
+
   const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
   const turn = chess.turn();
 
@@ -172,12 +187,41 @@ export function ChessGame() {
     return chess.isGameOver();
   }, [chess, state.fen]);
 
+  const isAiTurn = useMemo(() => {
+    if (!aiEnabled) return false;
+    if (gameOver) return false;
+    if (state.pendingPromotion) return false; // human promotion UI open; don't interrupt
+    return turn === aiSide;
+  }, [aiEnabled, aiSide, turn, gameOver, state.pendingPromotion]);
+
+  const isClockPaused = useMemo(() => {
+    // Pauses when:
+    // - timers aren't enabled or not started
+    // - game over
+    // - promotion modal open (waiting for choice)
+    // - AI is thinking (avoid burning time while engine computes / UI locks)
+    if (!state.timersEnabled) return true;
+    if (!timersRunning) return true;
+    if (gameOver) return true;
+    if (state.pendingPromotion) return true;
+    if (aiThinking) return true;
+    return false;
+  }, [state.timersEnabled, timersRunning, gameOver, state.pendingPromotion, aiThinking]);
+
   const { white, black, flag, reset: resetClocks } = useChessClock({
     initialSeconds: state.timerSeconds,
     activeColor: turn,
     enabled: state.timersEnabled,
+    paused: isClockPaused,
     gameOver
   });
+
+  // If someone flags, the game should effectively stop: pause timers and stop AI.
+  useEffect(() => {
+    if (!flag) return;
+    setTimersRunning(false);
+    setAiThinking(false);
+  }, [flag]);
 
   const checkSquare = useMemo(() => {
     if (!chess.isCheck()) return null;
@@ -188,25 +232,21 @@ export function ChessGame() {
 
   const canUndo = state.historySAN.length > 0;
 
-  const isAiTurn = useMemo(() => {
-    if (!aiEnabled) return false;
-    if (gameOver || flag) return false;
-    if (state.pendingPromotion) return false; // human promotion UI open; don't interrupt
-    return turn === aiSide;
-  }, [aiEnabled, aiSide, turn, gameOver, flag, state.pendingPromotion]);
-
   const humanCanInteract = useMemo(() => {
     // When AI is thinking or it's AI's turn, lock board interactions.
-    if (!aiEnabled) return !gameOver && !flag;
+    if (gameOver || flag) return false;
+    if (!aiEnabled) return true;
     if (aiThinking) return false;
     if (isAiTurn) return false;
-    return !gameOver && !flag;
+    return true;
   }, [aiEnabled, aiThinking, isAiTurn, gameOver, flag]);
 
   // Trigger AI move automatically when it's AI's turn.
   useEffect(() => {
+    if (!aiEnabled) return;
     if (!isAiTurn) return;
     if (aiThinking) return;
+    if (gameOver || flag) return;
 
     let canceled = false;
 
@@ -234,7 +274,14 @@ export function ChessGame() {
     return () => {
       canceled = true;
     };
-  }, [isAiTurn, aiThinking, aiDifficulty, aiSide, state.fen]);
+  }, [aiEnabled, isAiTurn, aiThinking, aiDifficulty, aiSide, state.fen, gameOver, flag]);
+
+  // Stop timers automatically on checkmate/draw/etc.
+  useEffect(() => {
+    if (!state.timersEnabled) return;
+    if (!gameOver) return;
+    setTimersRunning(false);
+  }, [state.timersEnabled, gameOver]);
 
   const onSquareClick = (square) => {
     // If it's not the human's turn (AI), ignore board clicks
@@ -307,13 +354,35 @@ export function ChessGame() {
 
   const onReset = () => {
     dispatch({ type: "RESET" });
-    resetClocks();
+    resetClocks(state.timerSeconds);
+    setTimersRunning(false);
     setAiThinking(false);
   };
 
-  const toggleTimers = () => {
-    dispatch({ type: "SET_TIMERS", enabled: !state.timersEnabled, seconds: state.timerSeconds });
-    resetClocks();
+  const toggleTimersEnabled = () => {
+    const nextEnabled = !state.timersEnabled;
+    dispatch({ type: "SET_TIMERS", enabled: nextEnabled, seconds: state.timerSeconds });
+    setTimersRunning(false);
+    resetClocks(state.timerSeconds);
+  };
+
+  const onTimerSecondsChange = (e) => {
+    const nextSeconds = clampTimerSeconds(e.target.value);
+    dispatch({ type: "SET_TIMERS", enabled: state.timersEnabled, seconds: nextSeconds });
+    // If user reconfigures time, reset clocks and stop running.
+    setTimersRunning(false);
+    resetClocks(nextSeconds);
+  };
+
+  const onStartPauseTimers = () => {
+    if (!state.timersEnabled) return;
+    if (gameOver || flag) return;
+    setTimersRunning((r) => !r);
+  };
+
+  const onResetTimers = () => {
+    resetClocks(state.timerSeconds);
+    setTimersRunning(false);
   };
 
   return (
@@ -352,8 +421,51 @@ export function ChessGame() {
           </div>
         </div>
 
-        <div className="aiControls" aria-label="AI controls">
-          <div className="aiControlsRow">
+        <div className="aiControls" aria-label="Timers and AI controls">
+          <div className="aiControlsRow" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <label className="aiLabel">
+                <span className="aiLabelText">Timers</span>
+                <input type="checkbox" checked={state.timersEnabled} onChange={toggleTimersEnabled} />
+              </label>
+
+              <label className="aiLabel">
+                <span className="aiLabelText">Time (sec)</span>
+                <input
+                  type="number"
+                  min={10}
+                  max={3600}
+                  step={10}
+                  value={state.timerSeconds}
+                  onChange={onTimerSecondsChange}
+                  disabled={!state.timersEnabled}
+                  style={{
+                    width: 110,
+                    border: "1px solid var(--border)",
+                    background: "rgba(255, 255, 255, 0.06)",
+                    color: "var(--text)",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    fontWeight: 700,
+                    fontSize: 13
+                  }}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="btn"
+                onClick={onStartPauseTimers}
+                disabled={!state.timersEnabled || gameOver || Boolean(flag)}
+              >
+                {timersRunning ? "Pause" : "Start"}
+              </button>
+
+              <button type="button" className="btn" onClick={onResetTimers} disabled={!state.timersEnabled}>
+                Reset Timers
+              </button>
+            </div>
+
             <label className="aiLabel">
               <span className="aiLabelText">AI Opponent</span>
               <input
@@ -385,11 +497,7 @@ export function ChessGame() {
 
             <label className="aiLabel">
               <span className="aiLabelText">Difficulty</span>
-              <select
-                value={aiDifficulty}
-                onChange={(e) => setAiDifficulty(e.target.value)}
-                disabled={!aiEnabled}
-              >
+              <select value={aiDifficulty} onChange={(e) => setAiDifficulty(e.target.value)} disabled={!aiEnabled}>
                 <option value="easy">Easy (depth 1)</option>
                 <option value="medium">Medium (depth 2)</option>
                 <option value="hard">Hard (depth 3)</option>
@@ -398,7 +506,8 @@ export function ChessGame() {
           </div>
 
           <div className="smallHelp">
-            AI uses minimax + alpha-beta pruning. Higher difficulty searches deeper and may feel slower.
+            Timers count down only while running and will pause during AI thinking / promotion selection. AI uses minimax +
+            alpha-beta pruning; higher difficulty searches deeper and may feel slower.
           </div>
         </div>
 
@@ -421,10 +530,6 @@ export function ChessGame() {
 
           <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || aiThinking}>
             Undo
-          </button>
-
-          <button type="button" className="btn" onClick={toggleTimers}>
-            {state.timersEnabled ? "Disable Timers" : "Enable Timers"}
           </button>
 
           <button
