@@ -87,8 +87,45 @@ function reducer(state, action) {
     }
     case "APPLY_MOVE": {
       const chess = state.chess;
+
       // chess.js mutates; we keep a single instance and derive fen/board/history from it.
-      chess.move(action.move);
+      // However, chess.move(...) can reject moves (returning null) and in some environments
+      // can surface as a runtime error. So we validate and only apply legal moves.
+      const { from, to, promotion } = action.move || {};
+
+      if (!from || !to) {
+        return { ...state, selectedSquare: null, legalMoves: [] };
+      }
+
+      // Find the exact legal move (verbose) so we can:
+      // - Ensure the move is actually legal for the current position/turn
+      // - Detect when promotion is required and provide a default if not supplied
+      const legal = chess.moves({ square: from, verbose: true });
+      const found = legal.find((m) => m.from === from && m.to === to);
+
+      if (!found) {
+        // Ignore invalid move requests rather than throwing and breaking the UI.
+        return { ...state, selectedSquare: null, legalMoves: [] };
+      }
+
+      const moveToApply = { from, to };
+
+      // If chess.js marks this as a promotion move, it requires a promotion piece.
+      // Default to queen if none provided (UI path should normally provide it via modal).
+      if (found.flags?.includes("p")) {
+        moveToApply.promotion = promotion || "q";
+      } else if (promotion) {
+        // Don't pass promotion for non-promotion moves; chess.js can reject it.
+        // (Intentionally ignored)
+      }
+
+      const result = chess.move(moveToApply);
+
+      if (!result) {
+        // Safety: if chess.js still rejects it, keep state stable.
+        return { ...state, selectedSquare: null, legalMoves: [] };
+      }
+
       return {
         ...state,
         chess,
