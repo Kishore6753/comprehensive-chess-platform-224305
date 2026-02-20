@@ -9,10 +9,21 @@ import { useChessClock } from "../hooks/useChessClock";
  * Game reducer keeps all chess state transitions predictable and undoable.
  */
 
+/**
+ * Create a Chess instance from a FEN string.
+ * Keeping chess.js objects out of reducer state avoids subtle UI desync caused by
+ * holding a single mutable object across renders.
+ */
+function chessFromFen(fen) {
+  const chess = new Chess();
+  if (fen) chess.load(fen);
+  return chess;
+}
+
 function createNewGame() {
   const chess = new Chess();
   return {
-    chess,
+    // Source of truth for position. Everything else can be derived.
     fen: chess.fen(),
     board: chess.board(),
     selectedSquare: null,
@@ -86,49 +97,36 @@ function reducer(state, action) {
       return { ...state, pendingPromotion: action.payload };
     }
     case "APPLY_MOVE": {
-      const chess = state.chess;
+      // Pure reducer: derive chess from current fen, apply, and return new derived state.
+      const chess = chessFromFen(state.fen);
 
-      // chess.js mutates; we keep a single instance and derive fen/board/history from it.
-      // However, chess.move(...) can reject moves (returning null) and in some environments
-      // can surface as a runtime error. So we validate and only apply legal moves.
       const { from, to, promotion } = action.move || {};
 
       if (!from || !to) {
         return { ...state, selectedSquare: null, legalMoves: [] };
       }
 
-      // Find the exact legal move (verbose) so we can:
-      // - Ensure the move is actually legal for the current position/turn
-      // - Detect when promotion is required and provide a default if not supplied
       const legal = chess.moves({ square: from, verbose: true });
       const found = legal.find((m) => m.from === from && m.to === to);
 
       if (!found) {
-        // Ignore invalid move requests rather than throwing and breaking the UI.
         return { ...state, selectedSquare: null, legalMoves: [] };
       }
 
       const moveToApply = { from, to };
 
-      // If chess.js marks this as a promotion move, it requires a promotion piece.
-      // Default to queen if none provided (UI path should normally provide it via modal).
       if (found.flags?.includes("p")) {
         moveToApply.promotion = promotion || "q";
-      } else if (promotion) {
-        // Don't pass promotion for non-promotion moves; chess.js can reject it.
-        // (Intentionally ignored)
       }
 
       const result = chess.move(moveToApply);
 
       if (!result) {
-        // Safety: if chess.js still rejects it, keep state stable.
         return { ...state, selectedSquare: null, legalMoves: [] };
       }
 
       return {
         ...state,
-        chess,
         fen: chess.fen(),
         board: chess.board(),
         historySAN: chess.history(),
@@ -138,11 +136,10 @@ function reducer(state, action) {
       };
     }
     case "UNDO": {
-      const chess = state.chess;
+      const chess = chessFromFen(state.fen);
       chess.undo();
       return {
         ...state,
-        chess,
         fen: chess.fen(),
         board: chess.board(),
         historySAN: chess.history(),
@@ -161,11 +158,12 @@ export function ChessGame() {
   /** Full-featured chess game with complete rules, highlights, SAN history, undo/reset, and optional timers. */
   const [state, dispatch] = useReducer(reducer, undefined, createNewGame);
 
-  const turn = state.chess.turn();
+  const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
+  const turn = chess.turn();
 
   const gameOver = useMemo(() => {
-    return state.chess.isGameOver();
-  }, [state.chess]);
+    return chess.isGameOver();
+  }, [chess, state.fen]);
 
   const { white, black, flag, reset: resetClocks } = useChessClock({
     initialSeconds: state.timerSeconds,
@@ -175,12 +173,11 @@ export function ChessGame() {
   });
 
   const checkSquare = useMemo(() => {
-    if (!state.chess.isCheck()) return null;
-    // highlight king of side to move (who is in check)
-    return computeCheckSquare(state.chess);
-  }, [state.chess]);
+    if (!chess.isCheck()) return null;
+    return computeCheckSquare(chess);
+  }, [chess, state.fen]);
 
-  const status = useMemo(() => statusText(state.chess, flag), [state.chess, flag]);
+  const status = useMemo(() => statusText(chess, flag), [chess, state.fen, flag]);
 
   const canUndo = state.historySAN.length > 0;
 
@@ -188,26 +185,24 @@ export function ChessGame() {
     // If promotion selection is open, ignore board clicks
     if (state.pendingPromotion) return;
 
-    const piece = state.chess.get(square);
+    const piece = chess.get(square);
 
     // If a piece is selected, attempt move to clicked square if legal
     if (state.selectedSquare) {
       const from = state.selectedSquare;
       const to = square;
 
-      // Clicking the same square deselects
       if (from === to) {
         dispatch({ type: "CLEAR_SELECTION" });
         return;
       }
 
-      const legal = state.chess.moves({ square: from, verbose: true });
+      const legal = chess.moves({ square: from, verbose: true });
       const found = legal.find((m) => m.to === to);
 
       if (!found) {
-        // If clicked your own piece, reselect it
         if (piece && piece.color === turn) {
-          const nextLegal = state.chess.moves({ square, verbose: true });
+          const nextLegal = chess.moves({ square, verbose: true });
           dispatch({ type: "SELECT_SQUARE", square, legalMoves: nextLegal });
         } else {
           dispatch({ type: "CLEAR_SELECTION" });
@@ -215,11 +210,10 @@ export function ChessGame() {
         return;
       }
 
-      // Promotion handling: ask user to choose piece
-      if (isPromotionMove(state.chess, from, to)) {
+      if (isPromotionMove(chess, from, to)) {
         dispatch({
           type: "PENDING_PROMOTION",
-          payload: { from, to, color: state.chess.get(from)?.color ?? turn }
+          payload: { from, to, color: chess.get(from)?.color ?? turn }
         });
         return;
       }
@@ -230,7 +224,7 @@ export function ChessGame() {
 
     // No piece selected yet => select if it's current player's piece
     if (piece && piece.color === turn && !gameOver && !flag) {
-      const legalMoves = state.chess.moves({ square, verbose: true });
+      const legalMoves = chess.moves({ square, verbose: true });
       dispatch({ type: "SELECT_SQUARE", square, legalMoves });
     } else {
       dispatch({ type: "CLEAR_SELECTION" });
@@ -288,9 +282,7 @@ export function ChessGame() {
             <p className="badgeTitle">Clocks</p>
             <p className="badgeValue">
               W {formatClock(white)} • B {formatClock(black)}{" "}
-              <span style={{ color: "rgba(234, 240, 255, 0.55)" }}>
-                {state.timersEnabled ? "" : "(disabled)"}
-              </span>
+              <span style={{ color: "rgba(234, 240, 255, 0.55)" }}>{state.timersEnabled ? "" : "(disabled)"}</span>
             </p>
           </div>
         </div>
@@ -343,9 +335,7 @@ export function ChessGame() {
         </div>
       </div>
 
-      {state.pendingPromotion ? (
-        <PromotionModal color={state.pendingPromotion.color} onSelect={onPromotionSelect} />
-      ) : null}
+      {state.pendingPromotion ? <PromotionModal color={state.pendingPromotion.color} onSelect={onPromotionSelect} /> : null}
     </div>
   );
 }
