@@ -35,7 +35,15 @@ function createNewGame() {
 
     // Timer configuration (base time). Running/paused is managed in component state.
     timersEnabled: false,
-    timerSeconds: 300
+    timerSeconds: 300,
+
+    // Draw offer flow
+    // drawOffer: null | { offeredBy: "w"|"b", ply: number, atMs: number }
+    drawOffer: null,
+
+    // Game end state (in addition to chess.js built-in gameOver conditions).
+    // end: null | { result: "1-0"|"0-1"|"1/2-1/2", reason: string }
+    end: null
   };
 }
 
@@ -55,8 +63,12 @@ function computeCheckSquare(chess) {
   return null;
 }
 
-function statusText(chess, flag) {
+function statusText({ chess, flag, end, drawOffer }) {
   const turn = chess.turn() === "w" ? "White" : "Black";
+
+  if (end) {
+    return `${end.reason} (${end.result})`;
+  }
 
   if (flag) {
     const loser = flag === "w" ? "White" : "Black";
@@ -71,6 +83,12 @@ function statusText(chess, flag) {
   if (chess.isStalemate()) return "Stalemate. Draw.";
   if (chess.isDraw()) return "Draw.";
   if (chess.isCheck()) return `${turn} to move — Check!`;
+
+  if (drawOffer) {
+    const offeredBy = drawOffer.offeredBy === "w" ? "White" : "Black";
+    return `${turn} to move. Draw offered by ${offeredBy}.`;
+  }
+
   return `${turn} to move.`;
 }
 
@@ -87,6 +105,11 @@ function clampTimerSeconds(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 300;
   return Math.min(60 * 60, Math.max(10, Math.round(n)));
+}
+
+function movePly(chess) {
+  // chess.js half-move counter isn't exposed directly; derive from history length.
+  return chess.history().length;
 }
 
 function reducer(state, action) {
@@ -106,7 +129,54 @@ function reducer(state, action) {
     case "PENDING_PROMOTION": {
       return { ...state, pendingPromotion: action.payload };
     }
+
+    case "OFFER_DRAW": {
+      // Only allow if not already offered and game not ended.
+      if (state.end) return state;
+      if (state.drawOffer) return state;
+
+      const chess = chessFromFen(state.fen);
+      const offeredBy = chess.turn();
+      const ply = movePly(chess);
+
+      return {
+        ...state,
+        drawOffer: { offeredBy, ply, atMs: Date.now() }
+      };
+    }
+
+    case "RESPOND_DRAW": {
+      // payload: { response: "accept"|"decline" }
+      if (state.end) return state;
+      if (!state.drawOffer) return state;
+
+      if (action.response === "accept") {
+        return {
+          ...state,
+          end: { result: "1/2-1/2", reason: "Draw by agreement" },
+          drawOffer: null,
+          selectedSquare: null,
+          legalMoves: [],
+          pendingPromotion: null
+        };
+      }
+
+      // decline -> clear offer
+      return {
+        ...state,
+        drawOffer: null
+      };
+    }
+
+    case "CLEAR_DRAW_OFFER": {
+      if (!state.drawOffer) return state;
+      return { ...state, drawOffer: null };
+    }
+
     case "APPLY_MOVE": {
+      // If game already ended by agreement, do nothing.
+      if (state.end) return state;
+
       // Pure reducer: derive chess from current fen, apply, and return new derived state.
       const chess = chessFromFen(state.fen);
 
@@ -146,12 +216,25 @@ function reducer(state, action) {
         historySAN: chess.history(),
         selectedSquare: null,
         legalMoves: [],
-        pendingPromotion: null
+        pendingPromotion: null,
+        // Offer expires on any move.
+        drawOffer: null
       };
     }
+
     case "UNDO": {
+      if (state.end) {
+        // Allow undo to step back from an agreed draw? For simplicity, treat undo as resuming play and clearing end state.
+        // This matches the requirement "on reset/undo to a position before the offer" and keeps UI consistent.
+        // Undo will also clear any offer implicitly.
+      }
+
       const chess = chessFromFen(state.fen);
       chess.undo();
+
+      const nextPly = movePly(chess);
+      const offerStillValid = state.drawOffer && state.drawOffer.ply === nextPly;
+
       return {
         ...state,
         fen: chess.fen(),
@@ -159,7 +242,11 @@ function reducer(state, action) {
         historySAN: chess.history(),
         selectedSquare: null,
         legalMoves: [],
-        pendingPromotion: null
+        pendingPromotion: null,
+        // If undo rewinds past the offer ply, clear the offer.
+        drawOffer: offerStillValid ? state.drawOffer : null,
+        // Undoing implies we're back in normal play.
+        end: null
       };
     }
     default:
@@ -190,9 +277,11 @@ export function ChessGame() {
   const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
   const turn = chess.turn();
 
-  const gameOver = useMemo(() => {
+  const gameOverByRules = useMemo(() => {
     return chess.isGameOver();
   }, [chess, state.fen]);
+
+  const gameOver = Boolean(state.end) || gameOverByRules;
 
   const isAiTurn = useMemo(() => {
     if (!aiEnabled) return false;
@@ -230,12 +319,28 @@ export function ChessGame() {
     setAiThinking(false);
   }, [flag]);
 
+  // If game ends by agreement, stop timers and AI.
+  useEffect(() => {
+    if (!state.end) return;
+    setTimersRunning(false);
+    setAiThinking(false);
+  }, [state.end]);
+
   const checkSquare = useMemo(() => {
     if (!chess.isCheck()) return null;
     return computeCheckSquare(chess);
   }, [chess, state.fen]);
 
-  const status = useMemo(() => statusText(chess, flag), [chess, state.fen, flag]);
+  const status = useMemo(
+    () =>
+      statusText({
+        chess,
+        flag,
+        end: state.end,
+        drawOffer: state.drawOffer
+      }),
+    [chess, state.fen, flag, state.end, state.drawOffer]
+  );
 
   const canUndo = state.historySAN.length > 0;
 
@@ -248,12 +353,65 @@ export function ChessGame() {
     return true;
   }, [aiEnabled, aiThinking, isAiTurn, gameOver, flag]);
 
+  const isHumanTurn = useMemo(() => {
+    if (gameOver || flag) return false;
+    if (!aiEnabled) return true;
+    return turn !== aiSide;
+  }, [aiEnabled, aiSide, turn, gameOver, flag]);
+
+  const canOfferDraw = useMemo(() => {
+    if (!isHumanTurn) return false;
+    if (state.end) return false;
+    if (gameOverByRules) return false;
+    if (state.pendingPromotion) return false;
+    if (state.drawOffer) return false;
+    if (aiThinking) return false;
+    return true;
+  }, [isHumanTurn, state.end, gameOverByRules, state.pendingPromotion, state.drawOffer, aiThinking]);
+
+  const drawOfferTarget = useMemo(() => {
+    if (!state.drawOffer) return null;
+    return state.drawOffer.offeredBy === "w" ? "b" : "w";
+  }, [state.drawOffer]);
+
+  const isDrawBannerVisible = useMemo(() => {
+    if (!state.drawOffer) return false;
+    if (gameOver || flag) return false;
+    // "Offers are only active on the opponent's turn"
+    return turn === drawOfferTarget;
+  }, [state.drawOffer, drawOfferTarget, turn, gameOver, flag]);
+
+  const isAiOpponentOfOffer = useMemo(() => {
+    if (!aiEnabled) return false;
+    if (!state.drawOffer) return false;
+    return drawOfferTarget === aiSide;
+  }, [aiEnabled, state.drawOffer, drawOfferTarget, aiSide]);
+
+  // Simple AI policy: decline draw offers by default.
+  useEffect(() => {
+    if (!isDrawBannerVisible) return;
+    if (!isAiOpponentOfOffer) return;
+    if (gameOver || flag) return;
+
+    const id = window.setTimeout(() => {
+      // Clear offer; do not auto-accept.
+      dispatch({ type: "RESPOND_DRAW", response: "decline" });
+    }, 250);
+
+    return () => window.clearTimeout(id);
+  }, [isDrawBannerVisible, isAiOpponentOfOffer, gameOver, flag]);
+
   // Trigger AI move automatically when it's AI's turn.
   useEffect(() => {
     if (!aiEnabled) return;
     if (!isAiTurn) return;
     if (aiThinking) return;
     if (gameOver || flag) return;
+
+    // If there's an outstanding draw offer, it should be handled first.
+    // Since we currently auto-decline when AI is the offer target, and humans can respond when human is target,
+    // we simply avoid making AI moves while a banner is visible.
+    if (isDrawBannerVisible) return;
 
     let canceled = false;
 
@@ -290,7 +448,17 @@ export function ChessGame() {
     return () => {
       canceled = true;
     };
-  }, [aiEnabled, isAiTurn, aiThinking, aiDifficulty, aiSide, state.fen, gameOver, flag]);
+  }, [
+    aiEnabled,
+    isAiTurn,
+    aiThinking,
+    aiDifficulty,
+    aiSide,
+    state.fen,
+    gameOver,
+    flag,
+    isDrawBannerVisible
+  ]);
 
   // Stop timers automatically on checkmate/draw/etc.
   useEffect(() => {
@@ -338,6 +506,9 @@ export function ChessGame() {
 
     // If it's not the human's turn (AI), ignore board clicks
     if (!humanCanInteract) return;
+
+    // If a draw offer is waiting for a response from the current human, keep UI locked until respond.
+    if (isDrawBannerVisible && state.drawOffer && turn === drawOfferTarget && !isAiOpponentOfOffer) return;
 
     // If promotion selection is open, ignore board clicks
     if (state.pendingPromotion) return;
@@ -437,6 +608,20 @@ export function ChessGame() {
     setTimersRunning(false);
   };
 
+  const onOfferDraw = () => {
+    dispatch({ type: "OFFER_DRAW" });
+  };
+
+  const onAcceptDraw = () => {
+    dispatch({ type: "RESPOND_DRAW", response: "accept" });
+  };
+
+  const onDeclineDraw = () => {
+    dispatch({ type: "RESPOND_DRAW", response: "decline" });
+  };
+
+  const offerByLabel = state.drawOffer?.offeredBy === "w" ? "White" : "Black";
+
   return (
     <div className="container">
       <div className="headerBar">
@@ -472,6 +657,27 @@ export function ChessGame() {
             </p>
           </div>
         </div>
+
+        {isDrawBannerVisible ? (
+          <div className="drawBanner" role="alert" aria-live="polite" aria-label="Draw offer">
+            <div className="drawBannerText">Draw offer from <strong>{offerByLabel}</strong>.</div>
+
+            {isAiOpponentOfOffer ? (
+              <div className="drawBannerActions">
+                <span className="drawBannerHint">AI declined.</span>
+              </div>
+            ) : (
+              <div className="drawBannerActions">
+                <button type="button" className="btn btnPrimary" onClick={onAcceptDraw}>
+                  Accept
+                </button>
+                <button type="button" className="btn" onClick={onDeclineDraw}>
+                  Decline
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div className="aiControls" aria-label="Timers and AI controls">
           <div className="aiControlsRow" style={{ justifyContent: "space-between" }}>
@@ -527,6 +733,8 @@ export function ChessGame() {
                   setAiEnabled(e.target.checked);
                   setAiThinking(false);
                   dispatch({ type: "CLEAR_SELECTION" });
+                  // If AI is turned on/off, any outstanding offer should not linger confusingly.
+                  dispatch({ type: "CLEAR_DRAW_OFFER" });
                 }}
               />
             </label>
@@ -539,6 +747,7 @@ export function ChessGame() {
                   setAiSide(e.target.value);
                   setAiThinking(false);
                   dispatch({ type: "CLEAR_SELECTION" });
+                  dispatch({ type: "CLEAR_DRAW_OFFER" });
                 }}
                 disabled={!aiEnabled}
               >
@@ -582,6 +791,16 @@ export function ChessGame() {
 
           <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || aiThinking}>
             Undo
+          </button>
+
+          <button
+            type="button"
+            className="btn"
+            onClick={onOfferDraw}
+            disabled={!canOfferDraw}
+            aria-label="Offer draw"
+          >
+            Offer Draw
           </button>
 
           <button
