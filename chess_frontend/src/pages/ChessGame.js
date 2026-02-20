@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { ChessBoard } from "../components/ChessBoard";
 import { MoveHistory } from "../components/MoveHistory";
+import { PostGameAnalysis } from "../components/PostGameAnalysis";
 import { PromotionModal } from "../components/PromotionModal";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useChessClock } from "../hooks/useChessClock";
@@ -263,6 +264,10 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
   /** Full-featured chess game with complete rules, highlights, SAN history, undo/reset, optional timers, and optional AI. */
   const [state, dispatch] = useReducer(reducer, undefined, createNewGame);
 
+  // Post-game analysis mode:
+  // When set, we render the board from this FEN instead of the live game FEN.
+  const [analysisFen, setAnalysisFen] = useState(null);
+
   // AI controls (kept separate from reducer to avoid complicating undo/history state).
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiSide, setAiSide] = useState("b"); // "w" or "b"
@@ -278,7 +283,8 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
   // SFX: prime audio on first user gesture (autoplay policies).
   const audioPrimedRef = useRef(false);
 
-  const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
+  const effectiveFen = analysisFen ?? state.fen;
+  const chess = useMemo(() => chessFromFen(effectiveFen), [effectiveFen]);
   const turn = chess.turn();
 
   const gameOverByRules = useMemo(() => {
@@ -330,6 +336,11 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
     setAiThinking(false);
   }, [state.end]);
 
+  // If the live game position changes (move/undo/reset), clear analysis board override.
+  useEffect(() => {
+    setAnalysisFen(null);
+  }, [state.fen]);
+
   const checkSquare = useMemo(() => {
     if (!chess.isCheck()) return null;
     return computeCheckSquare(chess);
@@ -349,13 +360,14 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
   const canUndo = state.historySAN.length > 0;
 
   const humanCanInteract = useMemo(() => {
-    // When AI is thinking or it's AI's turn, lock board interactions.
+    // When AI is thinking, it's AI's turn, or analysis is showing a historical position: lock board interactions.
+    if (analysisFen) return false;
     if (gameOver || flag) return false;
     if (!aiEnabled) return true;
     if (aiThinking) return false;
     if (isAiTurn) return false;
     return true;
-  }, [aiEnabled, aiThinking, isAiTurn, gameOver, flag]);
+  }, [analysisFen, aiEnabled, aiThinking, isAiTurn, gameOver, flag]);
 
   const isHumanTurn = useMemo(() => {
     if (gameOver || flag) return false;
@@ -364,6 +376,7 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
   }, [aiEnabled, aiSide, turn, gameOver, flag]);
 
   const canOfferDraw = useMemo(() => {
+    if (analysisFen) return false;
     if (!isHumanTurn) return false;
     if (state.end) return false;
     if (gameOverByRules) return false;
@@ -371,7 +384,7 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
     if (state.drawOffer) return false;
     if (aiThinking) return false;
     return true;
-  }, [isHumanTurn, state.end, gameOverByRules, state.pendingPromotion, state.drawOffer, aiThinking]);
+  }, [analysisFen, isHumanTurn, state.end, gameOverByRules, state.pendingPromotion, state.drawOffer, aiThinking]);
 
   const drawOfferTarget = useMemo(() => {
     if (!state.drawOffer) return null;
@@ -798,7 +811,7 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
             Restart
           </button>
 
-          <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || aiThinking}>
+          <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || aiThinking || Boolean(analysisFen)}>
             Undo
           </button>
 
@@ -816,7 +829,7 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
             type="button"
             className="btn btnDanger"
             onClick={() => dispatch({ type: "CLEAR_SELECTION" })}
-            disabled={!state.selectedSquare || aiThinking}
+            disabled={!state.selectedSquare || aiThinking || Boolean(analysisFen)}
           >
             Clear Selection
           </button>
@@ -826,7 +839,19 @@ export function ChessGame({ theme = "dark", onToggleTheme }) {
           Tip: Click a piece to see all legal moves. Illegal moves are prevented (including moves that leave your king in
           check). Check/checkmate/stalemate are detected automatically.
           {aiEnabled ? " When AI is enabled, the board locks during AI turns." : ""}
+          {analysisFen ? " Analysis view is active: board interactions are locked." : ""}
         </div>
+
+        {gameOver ? (
+          <PostGameAnalysis
+            historySAN={state.historySAN}
+            onNavigateFen={(fen) => {
+              setAnalysisFen(fen);
+              // Ensure selection doesn't linger while navigating historical positions.
+              dispatch({ type: "CLEAR_SELECTION" });
+            }}
+          />
+        ) : null}
       </div>
 
       <div className="panel sidePanel">

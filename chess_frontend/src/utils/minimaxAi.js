@@ -558,3 +558,21 @@ export function difficultyToRandomness(difficulty) {
   /** Map UI difficulty value to randomness probability when choosing among top moves. */
   return getDifficultyPreset(difficulty).randomness;
 }
+
+/**
+ * Public evaluator entrypoint for analysis mode.
+ *
+ * NOTE:
+ * - This intentionally reuses the engine's internal evaluation (material + PST + structure + safety).
+ * - The score is from White perspective in centipawns: positive = White better.
+ */
+
+// PUBLIC_INTERFACE
+export function evaluateFen({ fen }) {
+  /** Evaluate a FEN position and return a centipawn score from White perspective. */
+  const chess = new Chess();
+  chess.load(fen);
+
+  // If position is terminal, evaluation handles checkmate/draw cases.
+  return evaluatePosition(chess);
+}
