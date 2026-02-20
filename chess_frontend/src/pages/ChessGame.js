@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useReducer, useState } from "react";
+import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { ChessBoard } from "../components/ChessBoard";
 import { MoveHistory } from "../components/MoveHistory";
 import { PromotionModal } from "../components/PromotionModal";
 import { useChessClock } from "../hooks/useChessClock";
 import { difficultyToDepth, findBestMove } from "../utils/minimaxAi";
+import { playCaptureSfx, playMoveSfx, primeSfx } from "../utils/sfx";
 
 /**
  * Game reducer keeps all chess state transitions predictable and undoable.
@@ -180,6 +181,12 @@ export function ChessGame() {
   // Timer run state (separate from reducer; config lives in reducer).
   const [timersRunning, setTimersRunning] = useState(false);
 
+  // SFX: detect successful move application by watching history length changes.
+  const prevHistoryLenRef = useRef(0);
+
+  // SFX: prime audio on first user gesture (autoplay policies).
+  const audioPrimedRef = useRef(false);
+
   const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
   const turn = chess.turn();
 
@@ -283,7 +290,43 @@ export function ChessGame() {
     setTimersRunning(false);
   }, [state.timersEnabled, gameOver]);
 
+  // SFX: play after a successful move (human or AI) by observing history growth.
+  useEffect(() => {
+    const prevLen = prevHistoryLenRef.current;
+    const nextLen = state.historySAN.length;
+
+    // Ignore initial mount, undo, and reset (history shrinks or stays same).
+    if (nextLen <= prevLen) {
+      prevHistoryLenRef.current = nextLen;
+      return;
+    }
+
+    // Determine whether the last applied move was a capture using chess.js verbose history.
+    // We derive this from the *current* position after the move has been applied.
+    try {
+      const verboseHistory = chess.history({ verbose: true });
+      const last = verboseHistory[verboseHistory.length - 1];
+
+      // Capture flags: 'c' (capture) or 'e' (en passant capture).
+      const isCapture = Boolean(last && (last.flags?.includes("c") || last.flags?.includes("e")));
+
+      // Fire-and-forget: never await, never block UI.
+      if (isCapture) playCaptureSfx();
+      else playMoveSfx();
+    } catch {
+      // If anything goes wrong, fail silently (SFX must never break gameplay).
+    } finally {
+      prevHistoryLenRef.current = nextLen;
+    }
+  }, [state.historySAN.length, chess]);
+
   const onSquareClick = (square) => {
+    // Prime audio on the first user gesture to satisfy autoplay policies.
+    if (!audioPrimedRef.current) {
+      audioPrimedRef.current = true;
+      primeSfx();
+    }
+
     // If it's not the human's turn (AI), ignore board clicks
     if (!humanCanInteract) return;
 
