@@ -1,5 +1,25 @@
 /* Retro Chess UI Theme (single styling approach: plain CSS) */
+
+/*
+  Theme model:
+  - We set <html data-theme="light|dark"> via useTheme() hook.
+  - All colors are expressed as CSS variables so existing components automatically adapt.
+*/
 :root {
+  /* Core typography */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+
+  /* Shared tokens (kept constant across themes) */
+  --accent: #3b82f6;
+  --accent-2: #06b6d4;
+  --danger: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+
+  --radius: 14px;
+
+  /* Theme-dependent tokens (defaults align with dark) */
   --bg: #0b1020;
   --panel: #111a33;
   --panel-2: #0f1730;
@@ -7,29 +27,57 @@
   --text: #eaf0ff;
   --muted: rgba(234, 240, 255, 0.7);
 
-  --accent: #3b82f6;
-  --accent-2: #06b6d4;
-  --danger: #ef4444;
-  --success: #10b981;
-  --warning: #f59e0b;
+  /* App background composition */
+  --page-grad-1: rgba(59, 130, 246, 0.22);
+  --page-grad-2: rgba(6, 182, 212, 0.18);
+  --page-base-top: #070a14;
 
+  /* Surfaces / insets */
+  --badge-bg: rgba(0, 0, 0, 0.16);
+  --status-border: rgba(255, 255, 255, 0.18);
+  --move-list-bg: rgba(0, 0, 0, 0.14);
+  --ai-controls-bg: rgba(0, 0, 0, 0.12);
+
+  /* Board */
   --square-light: #e7d7b8;
   --square-dark: #b38b5d;
-
-  --square-light-hi: #f5e7cb;
-  --square-dark-hi: #c39a6b;
-
   --square-select: rgba(59, 130, 246, 0.35);
   --square-move-dot: rgba(17, 24, 39, 0.35);
   --square-capture: rgba(239, 68, 68, 0.35);
   --square-check: rgba(245, 158, 11, 0.45);
+  --board-border: rgba(255, 255, 255, 0.18);
 
+  /* Effects */
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
-  --radius: 14px;
+  --board-shadow: 0 14px 42px rgba(0, 0, 0, 0.35);
+}
 
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    monospace;
-  --sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+:root[data-theme="light"] {
+  --bg: #f4f7ff;
+  --panel: #ffffff;
+  --panel-2: #f6f8ff;
+  --border: rgba(15, 23, 42, 0.14);
+  --text: #0b1220;
+  --muted: rgba(11, 18, 32, 0.7);
+
+  --page-grad-1: rgba(59, 130, 246, 0.18);
+  --page-grad-2: rgba(6, 182, 212, 0.14);
+  --page-base-top: #ffffff;
+
+  --badge-bg: rgba(15, 23, 42, 0.06);
+  --status-border: rgba(15, 23, 42, 0.18);
+  --move-list-bg: rgba(15, 23, 42, 0.06);
+  --ai-controls-bg: rgba(15, 23, 42, 0.04);
+
+  --board-border: rgba(15, 23, 42, 0.16);
+
+  --shadow: 0 18px 48px rgba(2, 6, 23, 0.12);
+  --board-shadow: 0 14px 42px rgba(2, 6, 23, 0.14);
+
+  /* Slightly adjust board palette for light mode to keep retro feel but fit the lighter UI chrome */
+  --square-light: #f1e5cc;
+  --square-dark: #c79e73;
+  --square-move-dot: rgba(15, 23, 42, 0.22);
 }
 
 * {
@@ -39,9 +87,9 @@
 body {
   margin: 0;
   font-family: var(--sans);
-  background: radial-gradient(1100px 560px at 20% 0%, rgba(59, 130, 246, 0.22), transparent 60%),
-    radial-gradient(900px 500px at 85% 10%, rgba(6, 182, 212, 0.18), transparent 55%),
-    linear-gradient(180deg, #070a14, var(--bg));
+  background: radial-gradient(1100px 560px at 20% 0%, var(--page-grad-1), transparent 60%),
+    radial-gradient(900px 500px at 85% 10%, var(--page-grad-2), transparent 55%),
+    linear-gradient(180deg, var(--page-base-top), var(--bg));
   color: var(--text);
 }
 
@@ -75,6 +123,33 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.themeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.themeToggleIcon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.themeToggleText {
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 12px;
 }
 
 .brand {
@@ -125,7 +200,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--badge-bg);
 }
 
 .badgeTitle {
@@ -145,7 +220,7 @@ button {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border: 1px dashed var(--status-border);
   font-size: 13px;
   color: var(--muted);
 }
@@ -198,8 +273,8 @@ button {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--border);
+  background: var(--ai-controls-bg);
 }
 
 .aiControlsRow {
@@ -332,8 +407,8 @@ button {
   grid-template-columns: repeat(8, 1fr);
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--board-border);
+  box-shadow: var(--board-shadow);
 }
 
 .square {
@@ -418,7 +493,7 @@ button {
   overflow: auto;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.14);
+  background: var(--move-list-bg);
 }
 
 .moveRow {

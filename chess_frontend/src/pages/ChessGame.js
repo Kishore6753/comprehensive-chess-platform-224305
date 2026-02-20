@@ -3,6 +3,7 @@ import { Chess } from "chess.js";
 import { ChessBoard } from "../components/ChessBoard";
 import { MoveHistory } from "../components/MoveHistory";
 import { PromotionModal } from "../components/PromotionModal";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { useChessClock } from "../hooks/useChessClock";
 import { difficultyToRandomness, difficultyToTimeBudgetMs, difficultyToDepth, findBestMove } from "../utils/minimaxAi";
 import { playCaptureSfx, playMoveSfx, primeSfx } from "../utils/sfx";
@@ -254,8 +255,11 @@ function reducer(state, action) {
   }
 }
 
+/**
+ * @param {{ theme?: "light"|"dark", onToggleTheme?: () => void }} props
+ */
 // PUBLIC_INTERFACE
-export function ChessGame() {
+export function ChessGame({ theme = "dark", onToggleTheme }) {
   /** Full-featured chess game with complete rules, highlights, SAN history, undo/reset, optional timers, and optional AI. */
   const [state, dispatch] = useReducer(reducer, undefined, createNewGame);
 
@@ -629,11 +633,16 @@ export function ChessGame() {
           <h1 className="title">Retro Chess</h1>
           <p className="subtitle">Full rules • Highlights • SAN history • Undo/Reset • Optional timers • Minimax AI</p>
         </div>
-        <div className="badge" aria-label="Current position FEN">
-          <p className="badgeTitle">FEN</p>
-          <p className="badgeValue" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {state.fen}
-          </p>
+
+        <div className="headerActions" aria-label="Header actions">
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+
+          <div className="badge" aria-label="Current position FEN">
+            <p className="badgeTitle">FEN</p>
+            <p className="badgeValue" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {state.fen}
+            </p>
+          </div>
         </div>
       </div>
 
