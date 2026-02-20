@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
-import { evaluateFen } from "../utils/minimaxAi";
+import { evaluateFen, getPrincipalVariation } from "../utils/minimaxAi";
 
 /**
  * Post-game analysis design:
@@ -15,13 +15,26 @@ import { evaluateFen } from "../utils/minimaxAi";
  *    Mistake:    >= 120
  *    Blunder:    >= 300
  *
- * This is intentionally lightweight and deterministic; it doesn't require a backend.
+ * PV (principal variation) enhancement:
+ * - For each analyzed move, also compute engine PV from the position AFTER the move.
+ * - This provides a "best line" to show what the engine expects next.
+ *
+ * Performance:
+ * - PV search is capped (depth/time budget) and done synchronously, but we yield to the UI
+ *   before running analysis to avoid blocking initial paint.
  */
 
 const THRESHOLDS = {
   inaccuracy: 50,
   mistake: 120,
   blunder: 300
+};
+
+// Keep PV lightweight; this is per-move, so it needs to be small.
+const PV_SETTINGS = {
+  depth: 3,
+  timeBudgetMs: 90,
+  maxPvPlies: 6
 };
 
 function clamp(n, min, max) {
@@ -65,12 +78,36 @@ function safeEvaluateFen(fen) {
   }
 }
 
+function safeGetPv(fen) {
+  try {
+    const pv = getPrincipalVariation({
+      fen,
+      depth: PV_SETTINGS.depth,
+      timeBudgetMs: PV_SETTINGS.timeBudgetMs,
+      maxPvPlies: PV_SETTINGS.maxPvPlies
+    });
+
+    return {
+      pvSan: pv?.pvSan ?? [],
+      pvUci: pv?.pvUci ?? [],
+      pvEvalCp: pv?.evalCp ?? null,
+      pvStoppedByTime: Boolean(pv?.stoppedByTime)
+    };
+  } catch {
+    return { pvSan: [], pvUci: [], pvEvalCp: null, pvStoppedByTime: false };
+  }
+}
+
+function formatPvLine(pvSan) {
+  if (!pvSan || pvSan.length === 0) return "—";
+  return pvSan.join(" ");
+}
+
 function computeAnalysis(historySAN) {
   const chess = new Chess();
   const items = [];
 
-  let prevFen = chess.fen();
-  let prevEval = safeEvaluateFen(prevFen);
+  let prevEval = safeEvaluateFen(chess.fen());
 
   for (let ply = 0; ply < historySAN.length; ply++) {
     const san = historySAN[ply];
@@ -92,6 +129,9 @@ function computeAnalysis(historySAN) {
 
     const fenAfter = chess.fen();
     const evalAfter = safeEvaluateFen(fenAfter);
+
+    // PV from position AFTER the move (engine best continuation).
+    const pv = safeGetPv(fenAfter);
 
     // From White perspective, "good for White" is positive.
     // For mover, a worse result means:
@@ -117,10 +157,15 @@ function computeAnalysis(historySAN) {
       evalAfter,
       delta,
       lossCpForMover,
-      severity
+      severity,
+
+      // PV fields (from fenAfter)
+      pvSan: pv.pvSan,
+      pvUci: pv.pvUci,
+      pvEvalCp: pv.pvEvalCp,
+      pvStoppedByTime: pv.pvStoppedByTime
     });
 
-    prevFen = fenAfter;
     prevEval = evalAfter;
   }
 
@@ -233,7 +278,7 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
         <div>
           <h3 className="analysisTitle">Post-game analysis</h3>
           <div className="analysisSubtitle">
-            Engine-assisted review (local): tags inaccuracies/mistakes/blunders by centipawn loss.
+            Engine-assisted review (local): tags inaccuracies/mistakes/blunders by centipawn loss. Includes PV best lines.
           </div>
         </div>
 
@@ -323,6 +368,17 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
                 </div>
               </div>
 
+              <div className="analysisPvCard" aria-label="Principal variation">
+                <div className="analysisDetailLabel">Best line (PV)</div>
+                <div className="analysisPvValue" title={formatPvLine(selectedItem.pvSan)}>
+                  {formatPvLine(selectedItem.pvSan)}
+                  {selectedItem.pvStoppedByTime ? <span className="analysisPvHint"> (time-capped)</span> : null}
+                </div>
+                {Number.isFinite(selectedItem.pvEvalCp) ? (
+                  <div className="analysisPvMeta">PV eval: {formatCp(selectedItem.pvEvalCp)}</div>
+                ) : null}
+              </div>
+
               <div className="analysisDetailActions">
                 <button type="button" className="btn" onClick={() => navToFen(selectedItem.fenBefore)} disabled={running}>
                   Show position before
@@ -335,6 +391,8 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
               <div className="analysisSmallHelp">
                 Thresholds: Inaccuracy ≥ {THRESHOLDS.inaccuracy}cp • Mistake ≥ {THRESHOLDS.mistake}cp • Blunder ≥{" "}
                 {THRESHOLDS.blunder}cp
+                <br />
+                PV search: depth {PV_SETTINGS.depth} • time budget {PV_SETTINGS.timeBudgetMs}ms (per move)
               </div>
             </div>
           ) : null}
@@ -355,9 +413,13 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
                   setSelectedPly(it.ply);
                   navToFen(it.fenAfter);
                 }}
+                aria-label={`Move ${moveLabel(it)}. Best line: ${formatPvLine(it.pvSan)}`}
               >
                 <span className="analysisMoveNo">{it.mover === "w" ? `${moveNo(it.ply)}.` : ""}</span>
-                <span className="analysisMoveSan">{it.san}</span>
+                <span className="analysisMoveSan">
+                  <span className="analysisMoveSanPrimary">{it.san}</span>
+                  <span className="analysisMovePv">{formatPvLine(it.pvSan)}</span>
+                </span>
                 <span className="analysisMoveEval">{formatCp(it.evalAfter)}</span>
                 <span className={sevClass(it.severity)}>{it.severity ? severityLabel(it.severity) : "OK"}</span>
               </button>

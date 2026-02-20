@@ -129,11 +129,6 @@ function squareFile(square) {
   return square.charCodeAt(0) - 97;
 }
 
-function squareRank(square) {
-  // "a1" -> 0, "a8" -> 7
-  return Number(square[1]) - 1;
-}
-
 function countPieces(chess) {
   const board = chess.board();
   let count = 0;
@@ -379,9 +374,14 @@ function orderedMoves(chess) {
   return moves;
 }
 
+function nowMs() {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") return performance.now();
+  return Date.now();
+}
+
 function shouldStopByTime(ctx) {
   if (!ctx || !ctx.startTimeMs || !ctx.timeBudgetMs) return false;
-  return performance.now() - ctx.startTimeMs >= ctx.timeBudgetMs;
+  return nowMs() - ctx.startTimeMs >= ctx.timeBudgetMs;
 }
 
 /**
@@ -466,6 +466,80 @@ function chooseFromTop({ candidates, maximizingForWhite, randomness = 0, topK = 
 }
 
 /**
+ * PV helpers
+ */
+
+function moveToUci(move) {
+  if (!move) return "";
+  return `${move.from}${move.to}${move.promotion ?? ""}`;
+}
+
+function pvToSan(moves) {
+  if (!moves?.length) return [];
+  return moves.map((m) => m.san).filter(Boolean);
+}
+
+function stableBudgetMs(timeBudgetMs, fallbackMs = 120) {
+  if (typeof timeBudgetMs !== "number") return fallbackMs;
+  if (!Number.isFinite(timeBudgetMs)) return fallbackMs;
+  return Math.max(10, Math.floor(timeBudgetMs));
+}
+
+function bestLineSearch(chess, depth, maximizingForWhite, ctx) {
+  /**
+   * Returns the principal variation from the current position.
+   *
+   * Design:
+   * - We reuse alphabeta as the evaluator, but additionally keep track of the best move at each node.
+   * - This is still deterministic (given move ordering), and respects the same soft time budget.
+   */
+  if (depth <= 0 || chess.isGameOver()) {
+    return { score: evaluatePosition(chess), pv: [] };
+  }
+
+  if (ctx?.timeBudgetMs && shouldStopByTime(ctx)) {
+    return { score: evaluatePosition(chess), pv: [] };
+  }
+
+  const moves = orderedMoves(chess);
+  if (!moves.length) return { score: evaluatePosition(chess), pv: [] };
+
+  let bestScore = maximizingForWhite ? -INF : INF;
+  let bestPv = [];
+  let bestMove = null;
+
+  for (const m of moves) {
+    if (ctx?.timeBudgetMs && shouldStopByTime(ctx)) break;
+
+    chess.move(m);
+
+    // Evaluate remainder. For performance, we use alphabeta for the score at leaf,
+    // and only compute PV via recursion along the chosen best branch.
+    // This yields an actual PV without dramatically increasing work.
+    const childScore = alphabeta(chess, depth - 1, -INF, INF, !maximizingForWhite, ctx);
+
+    chess.undo();
+
+    const isBetter = maximizingForWhite ? childScore > bestScore : childScore < bestScore;
+    if (bestMove === null || isBetter) {
+      bestScore = childScore;
+      bestMove = m;
+    }
+  }
+
+  if (!bestMove) return { score: evaluatePosition(chess), pv: [] };
+
+  // Build PV by actually playing the best move and recursing.
+  chess.move(bestMove);
+  const child = bestLineSearch(chess, depth - 1, !maximizingForWhite, ctx);
+  chess.undo();
+
+  bestPv = [bestMove, ...child.pv];
+
+  return { score: bestScore, pv: bestPv };
+}
+
+/**
  * Pick the best move for a given side by searching from the current position.
  *
  * @param {string} fen current position FEN
@@ -492,12 +566,11 @@ export function findBestMove({ fen, aiColor, depth, timeBudgetMs, randomness, to
   const maximizingForWhite = aiColor === "w";
 
   const ctx = {
-    startTimeMs: typeof performance !== "undefined" ? performance.now() : Date.now(),
+    startTimeMs: nowMs(),
     timeBudgetMs: typeof timeBudgetMs === "number" ? Math.max(10, timeBudgetMs) : null
   };
 
   const candidates = [];
-  let bestScore = maximizingForWhite ? -INF : INF;
 
   // Small safeguard: if UI passes depth < 1
   const searchDepth = Math.max(1, Math.floor(depth));
@@ -511,9 +584,6 @@ export function findBestMove({ fen, aiColor, depth, timeBudgetMs, randomness, to
     chess.undo();
 
     candidates.push({ move: m, score });
-
-    if (maximizingForWhite) bestScore = Math.max(bestScore, score);
-    else bestScore = Math.min(bestScore, score);
   }
 
   const chosen = chooseFromTop({
@@ -529,6 +599,49 @@ export function findBestMove({ fen, aiColor, depth, timeBudgetMs, randomness, to
   const out = { from: chosen.from, to: chosen.to };
   if (chosen.promotion) out.promotion = chosen.promotion;
   return out;
+}
+
+/**
+ * A PV-enabled best line query for analysis UI.
+ *
+ * @param {string} fen current position FEN
+ * @param {number} depth search depth (plies)
+ * @param {number=} timeBudgetMs optional time budget (ms)
+ * @param {number=} maxPvPlies cap PV length to keep UI compact (defaults to depth)
+ * @returns {{ evalCp: number|null, pvUci: string[], pvSan: string[], nodes?: number, stoppedByTime?: boolean }}
+ */
+// PUBLIC_INTERFACE
+export function getPrincipalVariation({ fen, depth, timeBudgetMs, maxPvPlies }) {
+  /** Compute a principal variation (best line) plus evaluation from the given FEN. */
+  const chess = new Chess();
+  chess.load(fen);
+
+  if (chess.isGameOver()) {
+    return { evalCp: evaluatePosition(chess), pvUci: [], pvSan: [], stoppedByTime: false };
+  }
+
+  const searchDepth = Math.max(1, Math.floor(depth));
+  const budget = stableBudgetMs(timeBudgetMs, 140);
+
+  // We want a PV for the side to move; "maximizingForWhite" refers to the eval convention.
+  const maximizingForWhite = chess.turn() === "w";
+
+  const ctx = {
+    startTimeMs: nowMs(),
+    timeBudgetMs: budget
+  };
+
+  const res = bestLineSearch(chess, searchDepth, maximizingForWhite, ctx);
+
+  const cap = typeof maxPvPlies === "number" ? Math.max(0, Math.floor(maxPvPlies)) : searchDepth;
+  const pvMoves = (res.pv ?? []).slice(0, cap);
+
+  return {
+    evalCp: Number.isFinite(res.score) ? res.score : null,
+    pvUci: pvMoves.map(moveToUci).filter(Boolean),
+    pvSan: pvToSan(pvMoves),
+    stoppedByTime: Boolean(ctx.timeBudgetMs && shouldStopByTime(ctx))
+  };
 }
 
 /**

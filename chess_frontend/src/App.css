@@ -748,6 +748,35 @@ button {
   font-size: 13px;
 }
 
+.analysisPvCard {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--badge-bg);
+}
+
+.analysisPvValue {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysisPvHint {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.analysisPvMeta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .analysisDetailActions {
   margin-top: 10px;
   display: flex;
@@ -809,9 +838,24 @@ button {
 }
 
 .analysisMoveSan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: grid;
+  gap: 4px;
+}
+
+.analysisMoveSanPrimary {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.analysisMovePv {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .analysisMoveEval {
