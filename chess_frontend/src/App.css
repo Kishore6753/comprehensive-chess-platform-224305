@@ -1,0 +1,965 @@
+/* Retro Chess UI Theme (single styling approach: plain CSS) */
+
+/*
+  Theme model:
+  - We set <html data-theme="light|dark"> via useTheme() hook.
+  - All colors are expressed as CSS variables so existing components automatically adapt.
+*/
+:root {
+  /* Core typography */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+
+  /* Shared tokens (kept constant across themes) */
+  --accent: #3b82f6;
+  --accent-2: #06b6d4;
+  --danger: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+
+  --radius: 14px;
+
+  /* Theme-dependent tokens (defaults align with dark) */
+  --bg: #0b1020;
+  --panel: #111a33;
+  --panel-2: #0f1730;
+  --border: rgba(255, 255, 255, 0.14);
+  --text: #eaf0ff;
+  --muted: rgba(234, 240, 255, 0.7);
+
+  /* App background composition */
+  --page-grad-1: rgba(59, 130, 246, 0.22);
+  --page-grad-2: rgba(6, 182, 212, 0.18);
+  --page-base-top: #070a14;
+
+  /* Surfaces / insets */
+  --badge-bg: rgba(0, 0, 0, 0.16);
+  --status-border: rgba(255, 255, 255, 0.18);
+  --move-list-bg: rgba(0, 0, 0, 0.14);
+  --ai-controls-bg: rgba(0, 0, 0, 0.12);
+
+  /* Board */
+  --square-light: #e7d7b8;
+  --square-dark: #b38b5d;
+  --square-select: rgba(59, 130, 246, 0.35);
+  --square-move-dot: rgba(17, 24, 39, 0.35);
+  --square-capture: rgba(239, 68, 68, 0.35);
+  --square-check: rgba(245, 158, 11, 0.45);
+  --board-border: rgba(255, 255, 255, 0.18);
+
+  /* Effects */
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  --board-shadow: 0 14px 42px rgba(0, 0, 0, 0.35);
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f7ff;
+  --panel: #ffffff;
+  --panel-2: #f6f8ff;
+  --border: rgba(15, 23, 42, 0.14);
+  --text: #0b1220;
+  --muted: rgba(11, 18, 32, 0.7);
+
+  --page-grad-1: rgba(59, 130, 246, 0.18);
+  --page-grad-2: rgba(6, 182, 212, 0.14);
+  --page-base-top: #ffffff;
+
+  --badge-bg: rgba(15, 23, 42, 0.06);
+  --status-border: rgba(15, 23, 42, 0.18);
+  --move-list-bg: rgba(15, 23, 42, 0.06);
+  --ai-controls-bg: rgba(15, 23, 42, 0.04);
+
+  --board-border: rgba(15, 23, 42, 0.16);
+
+  --shadow: 0 18px 48px rgba(2, 6, 23, 0.12);
+  --board-shadow: 0 14px 42px rgba(2, 6, 23, 0.14);
+
+  /* Slightly adjust board palette for light mode to keep retro feel but fit the lighter UI chrome */
+  --square-light: #f1e5cc;
+  --square-dark: #c79e73;
+  --square-move-dot: rgba(15, 23, 42, 0.22);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: radial-gradient(1100px 560px at 20% 0%, var(--page-grad-1), transparent 60%),
+    radial-gradient(900px 500px at 85% 10%, var(--page-grad-2), transparent 55%),
+    linear-gradient(180deg, var(--page-base-top), var(--bg));
+  color: var(--text);
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+.App {
+  min-height: 100vh;
+  padding: 22px 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.container {
+  width: min(1100px, 100%);
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.headerBar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.themeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.themeToggleIcon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.themeToggleText {
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  margin: 0;
+  font-size: 22px;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 35%),
+    linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.boardPanel {
+  padding: 14px;
+}
+
+.sidePanel {
+  padding: 14px;
+}
+
+.topStatus {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.badge {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--badge-bg);
+}
+
+.badgeTitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.badgeValue {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.statusLine {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--status-border);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.drawBanner {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+  color: rgba(234, 240, 255, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.drawBannerText {
+  font-size: 13px;
+  color: rgba(234, 240, 255, 0.92);
+}
+
+.drawBannerActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.drawBannerHint {
+  font-size: 12px;
+  color: rgba(234, 240, 255, 0.75);
+  font-family: var(--mono);
+}
+
+.statusEmph {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.aiControls {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--ai-controls-bg);
+}
+
+.aiControlsRow {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aiLabel {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.aiLabelText {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.aiLabel input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.aiLabel select {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.aiLabel select:disabled {
+  opacity: 0.6;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btnPrimary {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.85), rgba(6, 182, 212, 0.75));
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.btnDanger {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.boardWrap {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.filesCol,
+.ranksCol {
+  display: grid;
+  gap: 0;
+}
+
+.ranksCol {
+  grid-template-rows: repeat(8, 1fr);
+  height: min(76vw, 520px);
+  max-height: 520px;
+  min-height: 320px;
+  width: 22px;
+  align-items: center;
+  justify-items: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.filesCol {
+  grid-template-columns: repeat(8, 1fr);
+  width: min(76vw, 520px);
+  max-width: 520px;
+  min-width: 320px;
+  height: 22px;
+  align-items: center;
+  justify-items: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-left: 22px;
+  margin-top: 8px;
+}
+
+.board {
+  width: min(76vw, 520px);
+  max-width: 520px;
+  min-width: 320px;
+  aspect-ratio: 1 / 1;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--board-border);
+  box-shadow: var(--board-shadow);
+}
+
+.square {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: pointer;
+}
+
+.squareLight {
+  background: var(--square-light);
+}
+.squareDark {
+  background: var(--square-dark);
+}
+
+.squareSelected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--square-select);
+  outline: 2px solid rgba(59, 130, 246, 0.55);
+  outline-offset: -2px;
+}
+
+.squareCheck::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--square-check);
+  outline: 2px solid rgba(245, 158, 11, 0.55);
+  outline-offset: -2px;
+}
+
+.squareMoveHint::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--square-move-dot);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
+.squareCaptureHint::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 3px solid rgba(239, 68, 68, 0.55);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.08);
+}
+
+.piece {
+  font-size: clamp(30px, 5.5vw, 44px);
+  line-height: 1;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.2));
+}
+
+.pieceGrab {
+  cursor: grab;
+}
+
+.piece:focus-visible,
+.square:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.8);
+  outline-offset: -3px;
+}
+
+.moveListTitle {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  color: rgba(234, 240, 255, 0.88);
+}
+
+.moveList {
+  height: 330px;
+  overflow: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--move-list-bg);
+}
+
+.moveRow {
+  display: grid;
+  grid-template-columns: 52px 1fr 1fr;
+  gap: 6px;
+  padding: 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: var(--mono);
+  font-size: 13px;
+  color: rgba(234, 240, 255, 0.9);
+}
+
+.moveRow:last-child {
+  border-bottom: none;
+}
+
+.moveNo {
+  color: rgba(234, 240, 255, 0.5);
+}
+
+.moveCell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.smallHelp {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.promoOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.promoModal {
+  width: min(420px, 100%);
+  padding: 14px;
+}
+
+.promoTitle {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 14px;
+}
+
+.promoGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.promoBtn {
+  display: grid;
+  place-items: center;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.promoBtn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.promoPiece {
+  font-size: 34px;
+}
+
+@media (max-width: 920px) {
+  .container {
+    grid-template-columns: 1fr;
+  }
+  .moveList {
+    height: 220px;
+  }
+}
+
+/* --- Post-game analysis --- */
+
+.analysisPanel {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.10);
+}
+
+:root[data-theme="light"] .analysisPanel {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.analysisHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.analysisHeaderActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.analysisTitle {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+
+.analysisSubtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.analysisSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.analysisSummaryRow {
+  border: 1px solid var(--border);
+  background: var(--badge-bg);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.analysisSummaryKey {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.analysisSummaryVal {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.analysisNav {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.analysisNavCenter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  border: 1px dashed var(--status-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.analysisNavMove {
+  font-family: var(--mono);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  font-size: 13px;
+}
+
+.analysisTag {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.analysisTagOk {
+  opacity: 0.75;
+}
+
+.analysisTagInaccuracy {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.analysisTagMistake {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.analysisTagBlunder {
+  border-color: rgba(239, 68, 68, 0.75);
+  background: rgba(239, 68, 68, 0.20);
+}
+
+.analysisDetails {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 10px;
+}
+
+.analysisDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysisDetailCard {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--badge-bg);
+}
+
+.analysisDetailLabel {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.analysisDetailValue {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.analysisPvCard {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--badge-bg);
+}
+
+.analysisPvValue {
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysisPvHint {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.analysisPvMeta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.analysisDetailActions {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.analysisSmallHelp {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.analysisMoveList {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: auto;
+  max-height: 240px;
+  background: var(--move-list-bg);
+}
+
+/* --- Evaluation graph (post-game analysis) --- */
+
+.evalGraphWrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 10px;
+}
+
+.evalGraphHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.evalGraphTitle {
+  font-family: var(--mono);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: rgba(234, 240, 255, 0.9);
+}
+
+:root[data-theme="light"] .evalGraphTitle {
+  color: rgba(11, 18, 32, 0.85);
+}
+
+.evalGraphHint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.evalGraphCanvasWrap {
+  position: relative;
+  width: 100%;
+  height: 150px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: crosshair;
+  outline: none;
+}
+
+.evalGraphCanvasWrap:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.8);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.evalGraphCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.evalGraphEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.analysisMoveRow {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 52px 1fr 80px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.analysisMoveRow:last-child {
+  border-bottom: none;
+}
+
+.analysisMoveRow:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.analysisMoveRowSelected {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.10);
+}
+
+.analysisMoveNo {
+  color: rgba(234, 240, 255, 0.5);
+}
+
+:root[data-theme="light"] .analysisMoveNo {
+  color: rgba(11, 18, 32, 0.55);
+}
+
+.analysisMoveSan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: grid;
+  gap: 4px;
+}
+
+.analysisMoveSanPrimary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analysisMovePv {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.analysisMoveEval {
+  justify-self: end;
+  opacity: 0.9;
+}
+
+.analysisEmpty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 10px 2px 2px;
+}
+
+@media (max-width: 920px) {
+  .analysisSummary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .analysisDetailGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .boardPanel,
+  .sidePanel {
+    padding: 12px;
+  }
+  .topStatus {
+    grid-template-columns: 1fr;
+  }
+  .analysisNav {
+    grid-template-columns: 1fr;
+  }
+  .analysisMoveRow {
+    grid-template-columns: 44px 1fr 72px auto;
+  }
+}
