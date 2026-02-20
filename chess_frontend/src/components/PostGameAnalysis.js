@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { evaluateFen, getPrincipalVariation } from "../utils/minimaxAi";
+import { exportAnnotatedPgn, downloadPgn } from "../utils/pgnExport";
 import { EvaluationGraph } from "./EvaluationGraph";
 
 /**
@@ -279,6 +280,54 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
     setHoverPly(null);
   };
 
+  const onExportPgn = () => {
+    if (!result) return;
+
+    // Keep headers minimal/standard as requested. Player names/metadata aren't tracked currently,
+    // so we use simple defaults and a computed Result when possible.
+    const chess = new Chess();
+    try {
+      for (const san of historySAN ?? []) {
+        const m = chess.move(san, { sloppy: true });
+        if (!m) break;
+      }
+    } catch {
+      // If history is malformed, we'll still export what we can (result may be "*").
+    }
+
+    // Compute a PGN Result token without running analysis:
+    // - If checkmate: side to move is mated => previous mover won
+    // - Else if draw: "1/2-1/2"
+    // - Else "*"
+    let resultToken = "*";
+    try {
+      if (chess.isCheckmate()) {
+        resultToken = chess.turn() === "w" ? "0-1" : "1-0";
+      } else if (chess.isDraw() || chess.isStalemate()) {
+        resultToken = "1/2-1/2";
+      }
+    } catch {
+      // ignore
+    }
+
+    const { pgn, fileName } = exportAnnotatedPgn({
+      historySAN,
+      analysisResult: result,
+      headers: {
+        Event: "Retro Chess",
+        Site: "Local",
+        Date: new Date().toISOString().slice(0, 10).replaceAll("-", "."),
+        Round: "-",
+        White: "White",
+        Black: "Black",
+        Result: resultToken
+      },
+      fileName: "retro-chess-annotated.pgn"
+    });
+
+    downloadPgn({ pgn, fileName });
+  };
+
   const moveNo = (ply) => Math.floor(ply / 2) + 1;
 
   const moveLabel = (it) => {
@@ -319,6 +368,11 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
           <button type="button" className="btn btnPrimary" onClick={onRun} disabled={!canAnalyze || running}>
             {running ? "Analyzing…" : result ? "Re-run" : "Analyze game"}
           </button>
+
+          <button type="button" className="btn" onClick={onExportPgn} disabled={!result || running}>
+            Export PGN
+          </button>
+
           <button type="button" className="btn" onClick={onClear} disabled={!result || running}>
             Clear
           </button>
