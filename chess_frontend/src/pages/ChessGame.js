@@ -4,7 +4,7 @@ import { ChessBoard } from "../components/ChessBoard";
 import { MoveHistory } from "../components/MoveHistory";
 import { PromotionModal } from "../components/PromotionModal";
 import { useChessClock } from "../hooks/useChessClock";
-import { difficultyToDepth, findBestMove } from "../utils/minimaxAi";
+import { difficultyToRandomness, difficultyToTimeBudgetMs, difficultyToDepth, findBestMove } from "../utils/minimaxAi";
 import { playCaptureSfx, playMoveSfx, primeSfx } from "../utils/sfx";
 
 /**
@@ -265,7 +265,16 @@ export function ChessGame() {
         if (canceled) return;
 
         const depth = difficultyToDepth(aiDifficulty);
-        const best = findBestMove({ fen: state.fen, aiColor: aiSide, depth });
+        const timeBudgetMs = difficultyToTimeBudgetMs(aiDifficulty);
+        const randomness = difficultyToRandomness(aiDifficulty);
+
+        const best = findBestMove({
+          fen: state.fen,
+          aiColor: aiSide,
+          depth,
+          timeBudgetMs,
+          randomness
+        });
         if (canceled) return;
 
         if (best) {
@@ -541,9 +550,9 @@ export function ChessGame() {
             <label className="aiLabel">
               <span className="aiLabelText">Difficulty</span>
               <select value={aiDifficulty} onChange={(e) => setAiDifficulty(e.target.value)} disabled={!aiEnabled}>
-                <option value="easy">Easy (depth 1)</option>
-                <option value="medium">Medium (depth 2)</option>
-                <option value="hard">Hard (depth 3)</option>
+                <option value="easy">Easy (depth 2)</option>
+                <option value="medium">Medium (depth 3)</option>
+                <option value="hard">Hard (depth 5)</option>
               </select>
             </label>
           </div>
