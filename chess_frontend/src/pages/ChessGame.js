@@ -1,9 +1,10 @@
-import React, { useMemo, useReducer } from "react";
+import React, { useEffect, useMemo, useReducer, useState } from "react";
 import { Chess } from "chess.js";
 import { ChessBoard } from "../components/ChessBoard";
 import { MoveHistory } from "../components/MoveHistory";
 import { PromotionModal } from "../components/PromotionModal";
 import { useChessClock } from "../hooks/useChessClock";
+import { difficultyToDepth, findBestMove } from "../utils/minimaxAi";
 
 /**
  * Game reducer keeps all chess state transitions predictable and undoable.
@@ -155,8 +156,14 @@ function reducer(state, action) {
 
 // PUBLIC_INTERFACE
 export function ChessGame() {
-  /** Full-featured chess game with complete rules, highlights, SAN history, undo/reset, and optional timers. */
+  /** Full-featured chess game with complete rules, highlights, SAN history, undo/reset, optional timers, and optional AI. */
   const [state, dispatch] = useReducer(reducer, undefined, createNewGame);
+
+  // AI controls (kept separate from reducer to avoid complicating undo/history state).
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiSide, setAiSide] = useState("b"); // "w" or "b"
+  const [aiDifficulty, setAiDifficulty] = useState("medium"); // easy|medium|hard
+  const [aiThinking, setAiThinking] = useState(false);
 
   const chess = useMemo(() => chessFromFen(state.fen), [state.fen]);
   const turn = chess.turn();
@@ -181,7 +188,58 @@ export function ChessGame() {
 
   const canUndo = state.historySAN.length > 0;
 
+  const isAiTurn = useMemo(() => {
+    if (!aiEnabled) return false;
+    if (gameOver || flag) return false;
+    if (state.pendingPromotion) return false; // human promotion UI open; don't interrupt
+    return turn === aiSide;
+  }, [aiEnabled, aiSide, turn, gameOver, flag, state.pendingPromotion]);
+
+  const humanCanInteract = useMemo(() => {
+    // When AI is thinking or it's AI's turn, lock board interactions.
+    if (!aiEnabled) return !gameOver && !flag;
+    if (aiThinking) return false;
+    if (isAiTurn) return false;
+    return !gameOver && !flag;
+  }, [aiEnabled, aiThinking, isAiTurn, gameOver, flag]);
+
+  // Trigger AI move automatically when it's AI's turn.
+  useEffect(() => {
+    if (!isAiTurn) return;
+    if (aiThinking) return;
+
+    let canceled = false;
+
+    const doAiMove = async () => {
+      setAiThinking(true);
+      try {
+        // Give UI a moment to update before computing (feels more natural).
+        await new Promise((r) => window.setTimeout(r, 120));
+        if (canceled) return;
+
+        const depth = difficultyToDepth(aiDifficulty);
+        const best = findBestMove({ fen: state.fen, aiColor: aiSide, depth });
+        if (canceled) return;
+
+        if (best) {
+          dispatch({ type: "APPLY_MOVE", move: best });
+        }
+      } finally {
+        if (!canceled) setAiThinking(false);
+      }
+    };
+
+    doAiMove();
+
+    return () => {
+      canceled = true;
+    };
+  }, [isAiTurn, aiThinking, aiDifficulty, aiSide, state.fen]);
+
   const onSquareClick = (square) => {
+    // If it's not the human's turn (AI), ignore board clicks
+    if (!humanCanInteract) return;
+
     // If promotion selection is open, ignore board clicks
     if (state.pendingPromotion) return;
 
@@ -235,6 +293,7 @@ export function ChessGame() {
     const pending = state.pendingPromotion;
     if (!pending) return;
 
+    // Promotion selection is only for the side currently moving (human, in our UI flow).
     dispatch({
       type: "APPLY_MOVE",
       move: { from: pending.from, to: pending.to, promotion: promotionType }
@@ -249,6 +308,7 @@ export function ChessGame() {
   const onReset = () => {
     dispatch({ type: "RESET" });
     resetClocks();
+    setAiThinking(false);
   };
 
   const toggleTimers = () => {
@@ -261,7 +321,7 @@ export function ChessGame() {
       <div className="headerBar">
         <div className="brand">
           <h1 className="title">Retro Chess</h1>
-          <p className="subtitle">Full rules • Highlights • SAN history • Undo/Reset • Optional timers</p>
+          <p className="subtitle">Full rules • Highlights • SAN history • Undo/Reset • Optional timers • Minimax AI</p>
         </div>
         <div className="badge" aria-label="Current position FEN">
           <p className="badgeTitle">FEN</p>
@@ -275,7 +335,12 @@ export function ChessGame() {
         <div className="topStatus">
           <div className="badge">
             <p className="badgeTitle">Turn</p>
-            <p className="badgeValue">{turn === "w" ? "White" : "Black"}</p>
+            <p className="badgeValue">
+              {turn === "w" ? "White" : "Black"}
+              {aiEnabled && turn === aiSide ? (
+                <span style={{ color: "rgba(234, 240, 255, 0.55)" }}>{aiThinking ? " (AI thinking…)" : " (AI)"}</span>
+              ) : null}
+            </p>
           </div>
 
           <div className="badge">
@@ -287,10 +352,60 @@ export function ChessGame() {
           </div>
         </div>
 
+        <div className="aiControls" aria-label="AI controls">
+          <div className="aiControlsRow">
+            <label className="aiLabel">
+              <span className="aiLabelText">AI Opponent</span>
+              <input
+                type="checkbox"
+                checked={aiEnabled}
+                onChange={(e) => {
+                  setAiEnabled(e.target.checked);
+                  setAiThinking(false);
+                  dispatch({ type: "CLEAR_SELECTION" });
+                }}
+              />
+            </label>
+
+            <label className="aiLabel">
+              <span className="aiLabelText">AI plays</span>
+              <select
+                value={aiSide}
+                onChange={(e) => {
+                  setAiSide(e.target.value);
+                  setAiThinking(false);
+                  dispatch({ type: "CLEAR_SELECTION" });
+                }}
+                disabled={!aiEnabled}
+              >
+                <option value="w">White</option>
+                <option value="b">Black</option>
+              </select>
+            </label>
+
+            <label className="aiLabel">
+              <span className="aiLabelText">Difficulty</span>
+              <select
+                value={aiDifficulty}
+                onChange={(e) => setAiDifficulty(e.target.value)}
+                disabled={!aiEnabled}
+              >
+                <option value="easy">Easy (depth 1)</option>
+                <option value="medium">Medium (depth 2)</option>
+                <option value="hard">Hard (depth 3)</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="smallHelp">
+            AI uses minimax + alpha-beta pruning. Higher difficulty searches deeper and may feel slower.
+          </div>
+        </div>
+
         <ChessBoard
           board={state.board}
           selectedSquare={state.selectedSquare}
-          legalMoves={state.legalMoves}
+          legalMoves={humanCanInteract ? state.legalMoves : []}
           inCheckSquare={checkSquare}
           onSquareClick={onSquareClick}
         />
@@ -304,7 +419,7 @@ export function ChessGame() {
             Restart
           </button>
 
-          <button type="button" className="btn" onClick={onUndo} disabled={!canUndo}>
+          <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || aiThinking}>
             Undo
           </button>
 
@@ -316,7 +431,7 @@ export function ChessGame() {
             type="button"
             className="btn btnDanger"
             onClick={() => dispatch({ type: "CLEAR_SELECTION" })}
-            disabled={!state.selectedSquare}
+            disabled={!state.selectedSquare || aiThinking}
           >
             Clear Selection
           </button>
@@ -325,14 +440,13 @@ export function ChessGame() {
         <div className="smallHelp">
           Tip: Click a piece to see all legal moves. Illegal moves are prevented (including moves that leave your king in
           check). Check/checkmate/stalemate are detected automatically.
+          {aiEnabled ? " When AI is enabled, the board locks during AI turns." : ""}
         </div>
       </div>
 
       <div className="panel sidePanel">
         <MoveHistory history={state.historySAN} />
-        <div className="smallHelp">
-          Moves are recorded in standard algebraic notation (SAN). Use Undo to step back.
-        </div>
+        <div className="smallHelp">Moves are recorded in standard algebraic notation (SAN). Use Undo to step back.</div>
       </div>
 
       {state.pendingPromotion ? <PromotionModal color={state.pendingPromotion.color} onSelect={onPromotionSelect} /> : null}
