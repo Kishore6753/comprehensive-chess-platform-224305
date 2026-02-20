@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { evaluateFen, getPrincipalVariation } from "../utils/minimaxAi";
+import { EvaluationGraph } from "./EvaluationGraph";
 
 /**
  * Post-game analysis design:
@@ -189,6 +190,9 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
   const [result, setResult] = useState(null);
   const [selectedPly, setSelectedPly] = useState(null);
 
+  // Hovering the graph should preview/select that move (without navigating).
+  const [hoverPly, setHoverPly] = useState(null);
+
   const lastNavFenRef = useRef(null);
 
   const canAnalyze = historySAN && historySAN.length > 0;
@@ -198,6 +202,7 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
     setRunning(false);
     setResult(null);
     setSelectedPly(null);
+    setHoverPly(null);
     lastNavFenRef.current = null;
   }, [historySAN]);
 
@@ -207,11 +212,35 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
     return result.items.find((x) => x.ply === selectedPly) ?? null;
   }, [result, selectedPly]);
 
+  const evalCpByPly = useMemo(() => {
+    // Evaluations from White's perspective; already in centipawns.
+    // We chart evalAfter so each point corresponds to "after this ply".
+    if (!result?.items?.length) return [];
+    return result.items.map((it) => (Number.isFinite(it.evalAfter) ? it.evalAfter : null));
+  }, [result]);
+
   const navToFen = (fen) => {
     if (!fen) return;
     if (lastNavFenRef.current === fen) return;
     lastNavFenRef.current = fen;
     if (typeof onNavigateFen === "function") onNavigateFen(fen);
+  };
+
+  const selectPlyNoNav = (ply) => {
+    if (!result) return;
+    if (ply == null) return;
+    const it = result.items[ply];
+    if (!it) return;
+    setSelectedPly(it.ply);
+  };
+
+  const selectPlyAndNavigate = (ply) => {
+    if (!result) return;
+    if (ply == null) return;
+    const it = result.items[ply];
+    if (!it) return;
+    setSelectedPly(it.ply);
+    navToFen(it.fenAfter);
   };
 
   const onRun = async () => {
@@ -233,6 +262,7 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
       const defaultPly = firstIssue ? firstIssue.ply : computed.items.length ? computed.items[computed.items.length - 1].ply : null;
 
       setSelectedPly(defaultPly);
+      setHoverPly(null);
 
       if (defaultPly != null) {
         const it = computed.items.find((x) => x.ply === defaultPly);
@@ -246,6 +276,7 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
   const onClear = () => {
     setResult(null);
     setSelectedPly(null);
+    setHoverPly(null);
   };
 
   const moveNo = (ply) => Math.floor(ply / 2) + 1;
@@ -271,6 +302,8 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
     setSelectedPly(it.ply);
     navToFen(it.fenAfter);
   };
+
+  const effectiveHighlightedPly = hoverPly != null ? hoverPly : selectedPly;
 
   return (
     <div className="analysisPanel" aria-label="Post-game analysis">
@@ -314,6 +347,20 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
               <span className="analysisSummaryVal">{result.counts.blunder}</span>
             </div>
           </div>
+
+          <EvaluationGraph
+            evalCpByPly={evalCpByPly}
+            selectedPly={effectiveHighlightedPly}
+            onHoverPly={(ply) => {
+              setHoverPly(ply);
+              if (ply != null) selectPlyNoNav(ply);
+            }}
+            onSelectPly={(ply) => {
+              setHoverPly(null);
+              selectPlyAndNavigate(ply);
+            }}
+            height={150}
+          />
 
           <div className="analysisNav" aria-label="Analysis navigation">
             <button type="button" className="btn" onClick={onPrev} disabled={running || selectedPly == null || selectedPly <= 0}>
@@ -411,6 +458,7 @@ export function PostGameAnalysis({ historySAN, onNavigateFen }) {
                   .join(" ")}
                 onClick={() => {
                   setSelectedPly(it.ply);
+                  setHoverPly(null);
                   navToFen(it.fenAfter);
                 }}
                 aria-label={`Move ${moveLabel(it)}. Best line: ${formatPvLine(it.pvSan)}`}
